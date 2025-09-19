@@ -1,23 +1,20 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime
 from typing import Iterable
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import (
-    BufferedInputFile,
-    CallbackQuery,
-    InlineKeyboardButton,
-    Message,
-)
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..database import Database, Event
 from ..keyboards.main import (
+    CALENDAR_DISABLED_CALLBACK,
+    CALENDAR_IGNORE_CALLBACK,
     CalendarData,
     calendar_keyboard,
     duration_keyboard,
@@ -64,6 +61,35 @@ def _events_overview(events: Iterable[Event], tz_name: str) -> str:
     return "\n".join(lines) if lines else "Пока нет запланированных событий."
 
 
+def _build_events_keyboard(events: Iterable[Event]) -> InlineKeyboardBuilder:
+    keyboard = InlineKeyboardBuilder()
+    for event in events:
+        keyboard.button(text=event.title[:32], callback_data=f"event:{event.id}:view")
+    if events:
+        keyboard.adjust(1)
+    keyboard.attach(events_keyboard())
+    keyboard.button(text="Назад", callback_data="menu:root")
+    keyboard.adjust(1)
+    return keyboard
+
+
+def _export_json_payload(events: Iterable[Event], tz_name: str) -> str:
+    return json.dumps(
+        [
+            {
+                "id": event.id,
+                "title": event.title,
+                "start": apply_timezone(event.start_time, tz_name).isoformat(),
+                "duration": event.duration_minutes,
+                "remind_before": event.remind_before,
+            }
+            for event in events
+        ],
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, database: Database) -> None:
     await state.clear()
@@ -90,16 +116,7 @@ async def cmd_events(message: Message, database: Database) -> None:
     tz_name = user["timezone"] if user else "UTC"
     events = await database.list_events(message.from_user.id)
     text = _events_overview(events, tz_name)
-    keyboard = InlineKeyboardBuilder()
-    for event in events:
-        label = event.title[:32]
-        keyboard.button(text=label, callback_data=f"event:{event.id}:view")
-    if events:
-        keyboard.adjust(1)
-    keyboard.attach(events_keyboard())
-    keyboard.button(text="Назад", callback_data="menu:root")
-    keyboard.adjust(1)
-    await message.answer(text, reply_markup=keyboard.as_markup())
+    await message.answer(text, reply_markup=_build_events_keyboard(events).as_markup())
 
 
 @router.message(Command("export"))
@@ -110,25 +127,14 @@ async def cmd_export(message: Message, database: Database) -> None:
         return
     user = await database.get_user(message.from_user.id)
     tz_name = user["timezone"] if user else "UTC"
-    text_export = _events_overview(events, tz_name)
-    json_export = json.dumps(
-        [
-            {
-                "id": event.id,
-                "title": event.title,
-                "start": apply_timezone(event.start_time, tz_name).isoformat(),
-                "duration_minutes": event.duration_minutes,
-                "remind_before": event.remind_before,
-            }
-            for event in events
-        ],
-        ensure_ascii=False,
-        indent=2,
-    )
-    await message.answer(text_export or "Нет событий", reply_markup=events_keyboard().as_markup())
-    await message.answer_document(
-        BufferedInputFile(json_export.encode("utf-8"), filename="events.json"),
-        caption="Экспорт в JSON",
+    overview = _events_overview(events, tz_name)
+    keyboard = InlineKeyboardBuilder()
+    keyboard.attach(events_keyboard())
+    keyboard.button(text="Назад", callback_data="menu:root")
+    keyboard.adjust(1)
+    await message.answer(
+        overview + "\n\nВыберите формат экспорта:",
+        reply_markup=keyboard.as_markup(),
     )
 
 
@@ -161,15 +167,9 @@ async def menu_list(callback: CallbackQuery, database: Database) -> None:
     tz_name = user["timezone"] if user else "UTC"
     events = await database.list_events(callback.from_user.id)
     text = _events_overview(events, tz_name)
-    keyboard = InlineKeyboardBuilder()
-    for event in events:
-        keyboard.button(text=event.title[:32], callback_data=f"event:{event.id}:view")
-    if events:
-        keyboard.adjust(1)
-    keyboard.attach(events_keyboard())
-    keyboard.button(text="Назад", callback_data="menu:root")
-    keyboard.adjust(1)
-    await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
+    await callback.message.edit_text(
+        text, reply_markup=_build_events_keyboard(events).as_markup()
+    )
     await callback.answer()
 
 
@@ -182,23 +182,13 @@ async def menu_export(callback: CallbackQuery, database: Database) -> None:
     user = await database.get_user(callback.from_user.id)
     tz_name = user["timezone"] if user else "UTC"
     overview = _events_overview(events, tz_name)
-    json_export = json.dumps(
-        [
-            {
-                "title": event.title,
-                "start": apply_timezone(event.start_time, tz_name).isoformat(),
-                "duration": event.duration_minutes,
-                "remind_before": event.remind_before,
-            }
-            for event in events
-        ],
-        ensure_ascii=False,
-        indent=2,
-    )
-    await callback.message.edit_text(overview, reply_markup=events_keyboard().as_markup())
-    await callback.message.answer_document(
-        BufferedInputFile(json_export.encode("utf-8"), filename="events.json"),
-        caption="Экспортировано в JSON",
+    keyboard = InlineKeyboardBuilder()
+    keyboard.attach(events_keyboard())
+    keyboard.button(text="Назад", callback_data="menu:root")
+    keyboard.adjust(1)
+    await callback.message.edit_text(
+        overview + "\n\nВыберите формат экспорта:",
+        reply_markup=keyboard.as_markup(),
     )
     await callback.answer()
 
@@ -242,16 +232,27 @@ async def process_title(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(CreateEvent.waiting_for_date, F.data == "calendar_today")
 async def calendar_today(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.message.edit_reply_markup(calendar_keyboard(date.today()).as_markup())
-    await callback.answer()
+    today = date.today()
+    await state.update_data(date=today.isoformat())
+    await state.set_state(CreateEvent.waiting_for_time)
+    await callback.message.edit_reply_markup(calendar_keyboard(today).as_markup())
+    await callback.message.answer(
+        "Выберите время:", reply_markup=time_keyboard().as_markup()
+    )
+    await callback.answer("Дата выбрана")
 
 
 @router.callback_query(CreateEvent.waiting_for_date, F.data.startswith("calendar_prev"))
 async def calendar_prev(callback: CallbackQuery, state: FSMContext) -> None:
     data = CalendarData.unpack(callback.data)
     target = date(year=data.year, month=data.month, day=1)
+    min_month = date.today().replace(day=1)
+    alert_text = None
+    if target < min_month:
+        target = date.today()
+        alert_text = "Прошедшие месяцы недоступны"
     await callback.message.edit_reply_markup(calendar_keyboard(target).as_markup())
-    await callback.answer()
+    await callback.answer(alert_text, show_alert=alert_text is not None)
 
 
 @router.callback_query(CreateEvent.waiting_for_date, F.data.startswith("calendar_next"))
@@ -266,12 +267,33 @@ async def calendar_next(callback: CallbackQuery, state: FSMContext) -> None:
 async def calendar_select(callback: CallbackQuery, state: FSMContext) -> None:
     data = CalendarData.unpack(callback.data)
     chosen_date = date(year=data.year, month=data.month, day=data.day or 1)
+    if chosen_date < date.today():
+        target = chosen_date.replace(day=1)
+        today = date.today().replace(day=1)
+        if target < today:
+            target = date.today()
+        await callback.message.edit_reply_markup(
+            calendar_keyboard(target).as_markup()
+        )
+        await callback.answer("Нельзя выбрать прошедшую дату", show_alert=True)
+        return
     await state.update_data(date=chosen_date.isoformat())
     await state.set_state(CreateEvent.waiting_for_time)
     await callback.message.answer(
         "Выберите время:", reply_markup=time_keyboard().as_markup()
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == CALENDAR_IGNORE_CALLBACK)
+@router.callback_query(F.data == "noop")
+async def calendar_ignore(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+
+@router.callback_query(F.data == CALENDAR_DISABLED_CALLBACK)
+async def calendar_disabled(callback: CallbackQuery) -> None:
+    await callback.answer("Нельзя выбрать прошедшую дату", show_alert=True)
 
 
 @router.callback_query(CreateEvent.waiting_for_time, F.data.startswith("time:"))
@@ -432,18 +454,14 @@ async def events_control(callback: CallbackQuery, database: Database) -> None:
         user = await database.get_user(callback.from_user.id)
         tz_name = user["timezone"] if user else "UTC"
         text = _events_overview(events, tz_name)
-        keyboard = InlineKeyboardBuilder()
-        for event in events:
-            keyboard.button(text=event.title[:32], callback_data=f"event:{event.id}:view")
-        if events:
-            keyboard.adjust(1)
-        keyboard.attach(events_keyboard())
-        keyboard.button(text="Назад", callback_data="menu:root")
-        keyboard.adjust(1)
         try:
-            await callback.message.edit_text(text, reply_markup=keyboard.as_markup())
+            await callback.message.edit_text(
+                text, reply_markup=_build_events_keyboard(events).as_markup()
+            )
         except TelegramBadRequest:
-            await callback.message.answer(text, reply_markup=keyboard.as_markup())
+            await callback.message.answer(
+                text, reply_markup=_build_events_keyboard(events).as_markup()
+            )
         await callback.answer("Обновлено")
     elif command in {"export_txt", "export_json"}:
         user = await database.get_user(callback.from_user.id)
@@ -455,19 +473,7 @@ async def events_control(callback: CallbackQuery, database: Database) -> None:
             text = _events_overview(events, tz_name)
             await callback.message.answer(text or "Нет событий")
         else:
-            payload = json.dumps(
-                [
-                    {
-                        "title": event.title,
-                        "start": apply_timezone(event.start_time, tz_name).isoformat(),
-                        "duration": event.duration_minutes,
-                        "remind_before": event.remind_before,
-                    }
-                    for event in events
-                ],
-                ensure_ascii=False,
-                indent=2,
-            )
+            payload = _export_json_payload(events, tz_name)
             await callback.message.answer_document(
                 BufferedInputFile(payload.encode("utf-8"), filename="events.json"),
                 caption="Экспорт JSON",
