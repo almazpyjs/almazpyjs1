@@ -68,34 +68,76 @@ def settings_keyboard(current: int) -> InlineKeyboardBuilder:
     return keyboard
 
 
+CALENDAR_IGNORE_CALLBACK = "calendar_ignore"
+CALENDAR_DISABLED_CALLBACK = "calendar_disabled"
+
+
 def calendar_keyboard(target_date: date) -> InlineKeyboardBuilder:
     cal = calendar.Calendar(firstweekday=0)
     month_days = cal.monthdayscalendar(target_date.year, target_date.month)
+    today = date.today()
+    target_month_start = target_date.replace(day=1)
+    current_month_start = today.replace(day=1)
     keyboard = InlineKeyboardBuilder()
     keyboard.row(
-        InlineKeyboardButton(text=target_date.strftime("%B %Y"), callback_data="noop"),
+        InlineKeyboardButton(
+            text=target_date.strftime("%B %Y"),
+            callback_data=CALENDAR_IGNORE_CALLBACK,
+        ),
     )
     week_days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    keyboard.row(*[InlineKeyboardButton(text=day, callback_data="noop") for day in week_days])
+    keyboard.row(
+        *[
+            InlineKeyboardButton(text=day, callback_data=CALENDAR_IGNORE_CALLBACK)
+            for day in week_days
+        ]
+    )
     for week in month_days:
         buttons = []
         for day in week:
             if day == 0:
-                buttons.append(InlineKeyboardButton(text=" ", callback_data="noop"))
+                buttons.append(
+                    InlineKeyboardButton(text=" ", callback_data=CALENDAR_IGNORE_CALLBACK)
+                )
             else:
-                data = CalendarData("calendar", target_date.year, target_date.month, day).pack()
-                buttons.append(InlineKeyboardButton(text=str(day), callback_data=data))
+                data = CalendarData(
+                    "calendar", target_date.year, target_date.month, day
+                ).pack()
+                current = date(target_date.year, target_date.month, day)
+                if current < today:
+                    buttons.append(
+                        InlineKeyboardButton(
+                            text=f"·{day}·", callback_data=CALENDAR_DISABLED_CALLBACK
+                        )
+                    )
+                else:
+                    buttons.append(
+                        InlineKeyboardButton(text=str(day), callback_data=data)
+                    )
         keyboard.row(*buttons)
-    prev_month = (target_date.replace(day=1) - timedelta(days=1)).replace(day=1)
+    prev_month = (target_month_start - timedelta(days=1)).replace(day=1)
     next_month = (target_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+    if prev_month < current_month_start:
+        prev_button = InlineKeyboardButton(
+            text="<", callback_data=CALENDAR_IGNORE_CALLBACK
+        )
+    else:
+        prev_button = InlineKeyboardButton(
+            text="<",
+            callback_data=CalendarData(
+                "calendar_prev", prev_month.year, prev_month.month
+            ).pack(),
+        )
+    next_button = InlineKeyboardButton(
+        text=">",
+        callback_data=CalendarData(
+            "calendar_next", next_month.year, next_month.month
+        ).pack(),
+    )
     keyboard.row(
-        InlineKeyboardButton(
-            text="<", callback_data=CalendarData("calendar_prev", prev_month.year, prev_month.month).pack()
-        ),
+        prev_button,
         InlineKeyboardButton(text="Сегодня", callback_data="calendar_today"),
-        InlineKeyboardButton(
-            text=">", callback_data=CalendarData("calendar_next", next_month.year, next_month.month).pack()
-        ),
+        next_button,
     )
     return keyboard
 
@@ -155,6 +197,8 @@ def event_actions_keyboard(event_id: int) -> InlineKeyboardBuilder:
 
 __all__ = [
     "CalendarData",
+    "CALENDAR_IGNORE_CALLBACK",
+    "CALENDAR_DISABLED_CALLBACK",
     "main_menu",
     "timezone_keyboard",
     "reminder_default_keyboard",
