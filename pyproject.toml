@@ -1,0 +1,13 @@
+[project]
+name = "calendar-bot"
+version = "0.1.0"
+description = "Асинхронный Telegram-бот календарь на aiogram"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiogram>=3.1.1",
+    "aiosqlite>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = []
