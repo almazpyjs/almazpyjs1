@@ -60,6 +60,14 @@ def reminder_default_keyboard(current: int) -> InlineKeyboardBuilder:
     return keyboard
 
 
+def settings_keyboard(current: int) -> InlineKeyboardBuilder:
+    keyboard = InlineKeyboardBuilder()
+    keyboard.attach(timezone_keyboard())
+    keyboard.attach(reminder_default_keyboard(current))
+    keyboard.row(InlineKeyboardButton(text="Назад", callback_data="menu:root"))
+    return keyboard
+
+
 def calendar_keyboard(target_date: date) -> InlineKeyboardBuilder:
     cal = calendar.Calendar(firstweekday=0)
     month_days = cal.monthdayscalendar(target_date.year, target_date.month)
@@ -150,6 +158,7 @@ __all__ = [
     "main_menu",
     "timezone_keyboard",
     "reminder_default_keyboard",
+    "settings_keyboard",
     "calendar_keyboard",
     "time_keyboard",
     "duration_keyboard",

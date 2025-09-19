@@ -24,10 +24,9 @@ from ..keyboards.main import (
     event_actions_keyboard,
     events_keyboard,
     main_menu,
-    reminder_default_keyboard,
     reminder_keyboard,
+    settings_keyboard,
     time_keyboard,
-    timezone_keyboard,
 )
 from ..states import CreateEvent, SettingsState
 from ..utils.datetime import (
@@ -140,12 +139,11 @@ async def cmd_settings(message: Message, database: Database) -> None:
     default_reminder = int(user["reminder_default"]) if user else 15
     text = (
         f"Текущий часовой пояс: <b>{tz_name}</b>\n"
-        f"Напоминание по умолчанию: {default_reminder} минут"
+        f"Напоминание по умолчанию: {default_reminder} минут\n\n"
+        "Выберите часовой пояс или напоминание по умолчанию:"
     )
-    await message.answer(text, reply_markup=timezone_keyboard().as_markup())
     await message.answer(
-        "Выберите напоминание по умолчанию:",
-        reply_markup=reminder_default_keyboard(default_reminder).as_markup(),
+        text, reply_markup=settings_keyboard(default_reminder).as_markup()
     )
 
 
@@ -213,12 +211,11 @@ async def menu_settings(callback: CallbackQuery, database: Database) -> None:
     text = (
         f"Настройки пользователя\n"
         f"Часовой пояс: <b>{tz_name}</b>\n"
-        f"Напоминание по умолчанию: {default_reminder} минут"
+        f"Напоминание по умолчанию: {default_reminder} минут\n\n"
+        "Выберите часовой пояс или напоминание по умолчанию:"
     )
-    await callback.message.edit_text(text, reply_markup=timezone_keyboard().as_markup())
-    await callback.message.answer(
-        "Выберите напоминание по умолчанию:",
-        reply_markup=reminder_default_keyboard(default_reminder).as_markup(),
+    await callback.message.edit_text(
+        text, reply_markup=settings_keyboard(default_reminder).as_markup()
     )
     await callback.answer()
 
