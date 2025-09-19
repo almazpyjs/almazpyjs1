@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 import calendar
 
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from typing import Iterable
+from zoneinfo import ZoneInfo
 
 
 @dataclass(slots=True)
@@ -34,6 +36,7 @@ def main_menu() -> InlineKeyboardBuilder:
     keyboard.button(text="Мои события", callback_data="menu:list")
     keyboard.button(text="Экспорт", callback_data="menu:export")
     keyboard.button(text="Настройки", callback_data="menu:settings")
+    keyboard.button(text="Ближайшее событие", callback_data="menu:next")
     keyboard.adjust(2)
     return keyboard
 
@@ -71,6 +74,8 @@ def settings_keyboard(current: int) -> InlineKeyboardBuilder:
 CALENDAR_IGNORE_CALLBACK = "calendar_ignore"
 CALENDAR_DISABLED_CALLBACK = "calendar_disabled"
 
+DEFAULT_TIME_OPTIONS = ("08:00", "10:00", "13:00", "15:00", "18:00", "21:00")
+
 
 def calendar_keyboard(target_date: date) -> InlineKeyboardBuilder:
     cal = calendar.Calendar(firstweekday=0)
@@ -107,7 +112,7 @@ def calendar_keyboard(target_date: date) -> InlineKeyboardBuilder:
                 if current < today:
                     buttons.append(
                         InlineKeyboardButton(
-                            text=f"·{day}·", callback_data=CALENDAR_DISABLED_CALLBACK
+                            text=" ", callback_data=CALENDAR_IGNORE_CALLBACK
                         )
                     )
                 else:
@@ -142,9 +147,31 @@ def calendar_keyboard(target_date: date) -> InlineKeyboardBuilder:
     return keyboard
 
 
-def time_keyboard() -> InlineKeyboardBuilder:
+def available_time_options(selected_date: date | None, tz_name: str) -> list[str]:
+    if selected_date is None:
+        return list(DEFAULT_TIME_OPTIONS)
+    now = datetime.now(ZoneInfo(tz_name))
+    if selected_date != now.date():
+        return list(DEFAULT_TIME_OPTIONS)
+    current_time = now.time().replace(second=0, microsecond=0)
+    options: list[str] = []
+    for value in DEFAULT_TIME_OPTIONS:
+        slot_time = time.fromisoformat(value)
+        if slot_time <= current_time:
+            continue
+        options.append(value)
+    return options
+
+
+def time_keyboard(
+    selected_date: date | None = None,
+    tz_name: str = "UTC",
+    options: Iterable[str] | None = None,
+) -> InlineKeyboardBuilder:
     keyboard = InlineKeyboardBuilder()
-    for value in ("08:00", "10:00", "13:00", "15:00", "18:00", "21:00"):
+    if options is None:
+        options = available_time_options(selected_date, tz_name)
+    for value in options:
         keyboard.button(text=value, callback_data=f"time:{value}")
     keyboard.button(text="Свое время", callback_data="time:custom")
     keyboard.adjust(3)
@@ -178,12 +205,24 @@ def reminder_keyboard(default_minutes: int) -> InlineKeyboardBuilder:
     return keyboard
 
 
-def events_keyboard() -> InlineKeyboardBuilder:
+def events_keyboard(view: str = "active") -> InlineKeyboardBuilder:
     keyboard = InlineKeyboardBuilder()
-    keyboard.button(text="Обновить", callback_data="events:refresh")
-    keyboard.button(text="Экспорт TXT", callback_data="events:export_txt")
-    keyboard.button(text="Экспорт JSON", callback_data="events:export_json")
+    keyboard.button(text="Обновить", callback_data=f"events:refresh:{view}")
+    keyboard.button(text="Экспорт TXT", callback_data=f"events:export_txt:{view}")
+    keyboard.button(text="Экспорт JSON", callback_data=f"events:export_json:{view}")
     keyboard.adjust(2)
+    if view == "active":
+        keyboard.row(
+            InlineKeyboardButton(
+                text="Прошедшие напоминания", callback_data="events:view:history"
+            )
+        )
+    else:
+        keyboard.row(
+            InlineKeyboardButton(
+                text="Текущие напоминания", callback_data="events:view:active"
+            )
+        )
     return keyboard
 
 
@@ -204,6 +243,7 @@ __all__ = [
     "reminder_default_keyboard",
     "settings_keyboard",
     "calendar_keyboard",
+    "available_time_options",
     "time_keyboard",
     "duration_keyboard",
     "reminder_keyboard",
