@@ -136,17 +136,41 @@ class Database:
             await db.commit()
             return cursor.lastrowid
 
-    async def list_events(self, telegram_id: int) -> list[Event]:
+    async def list_events(
+        self, telegram_id: int, *, reminded: Optional[bool] = None
+    ) -> list[Event]:
         async with self.connect() as db:
+            conditions = ["u.telegram_id = ?"]
+            values: list[object] = [telegram_id]
+            if reminded is not None:
+                conditions.append("e.reminded = ?")
+                values.append(1 if reminded else 0)
+            query = (
+                " "
+                """
+                SELECT e.*, u.telegram_id as telegram_id FROM events e
+                JOIN users u ON u.id = e.user_id
+                WHERE {conditions}
+                ORDER BY e.start_time ASC
+                """
+            ).format(conditions=" AND ".join(conditions))
+            async with db.execute(query, values) as cursor:
+                rows = await cursor.fetchall()
+        return [self._row_to_event(row) for row in rows]
+
+    async def get_next_event(self, telegram_id: int) -> Optional[Event]:
+        async with self.connect() as db:
+            now_iso = datetime.now(timezone.utc).isoformat()
             query = """
                 SELECT e.*, u.telegram_id as telegram_id FROM events e
                 JOIN users u ON u.id = e.user_id
-                WHERE u.telegram_id = ?
+                WHERE u.telegram_id = ? AND e.reminded = 0 AND e.start_time >= ?
                 ORDER BY e.start_time ASC
+                LIMIT 1
             """
-            async with db.execute(query, (telegram_id,)) as cursor:
-                rows = await cursor.fetchall()
-        return [self._row_to_event(row) for row in rows]
+            async with db.execute(query, (telegram_id, now_iso)) as cursor:
+                row = await cursor.fetchone()
+        return self._row_to_event(row) if row else None
 
     async def get_event(self, telegram_id: int, event_id: int) -> Optional[Event]:
         async with self.connect() as db:
